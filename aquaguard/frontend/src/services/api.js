@@ -49,9 +49,9 @@ export const mlApi = {
 };
 export function openWebSocket(onMsg) {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const host  = import.meta.env.VITE_WS_HOST || `${proto}://${location.hostname}:5000`;
+  const host  = import.meta.env.VITE_WS_HOST || `${proto}://${location.host}`;
   const token = localStorage.getItem('aq_token');
-  const ws    = new WebSocket(`${host}${token ? `?token=${token}` : ''}`);
+  const ws    = new WebSocket(`${host}/ws-live${token ? `?token=${token}` : ''}`);
   ws.onmessage = e => { try { onMsg(JSON.parse(e.data)); } catch {} };
   return ws;
 }
