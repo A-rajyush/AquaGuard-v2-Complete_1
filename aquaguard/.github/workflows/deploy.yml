@@ -1,0 +1,72 @@
+name: AquaGuard — CI/CD to AWS ECS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  AWS_REGION:   ap-south-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-south-1.amazonaws.com
+  CLUSTER:      aquaguard-cluster
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '20', cache: 'npm', cache-dependency-path: 'backend/package-lock.json' }
+      - run: cd backend && npm ci && npm test
+
+  build-push:
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push backend
+        run: |
+          docker build -f docker/Dockerfile.backend -t $ECR_REGISTRY/aquaguard-backend:${{ github.sha }} ./backend
+          docker push $ECR_REGISTRY/aquaguard-backend:${{ github.sha }}
+          docker tag  $ECR_REGISTRY/aquaguard-backend:${{ github.sha }} $ECR_REGISTRY/aquaguard-backend:latest
+          docker push $ECR_REGISTRY/aquaguard-backend:latest
+
+      - name: Build & push frontend
+        run: |
+          docker build -f docker/Dockerfile.frontend -t $ECR_REGISTRY/aquaguard-frontend:${{ github.sha }} ./frontend
+          docker push $ECR_REGISTRY/aquaguard-frontend:${{ github.sha }}
+          docker tag  $ECR_REGISTRY/aquaguard-frontend:${{ github.sha }} $ECR_REGISTRY/aquaguard-frontend:latest
+          docker push $ECR_REGISTRY/aquaguard-frontend:latest
+
+  deploy:
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Force new ECS deployments
+        run: |
+          aws ecs update-service --cluster $CLUSTER --service aquaguard-backend  --force-new-deployment
+          aws ecs update-service --cluster $CLUSTER --service aquaguard-frontend --force-new-deployment
+
+      - name: Wait for stable
+        run: |
+          aws ecs wait services-stable \
+            --cluster $CLUSTER \
+            --services aquaguard-backend aquaguard-frontend
+
+      - run: echo "✅ AquaGuard deployed → https://aquaguard.app"
